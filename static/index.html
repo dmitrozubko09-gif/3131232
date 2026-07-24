@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Remote Control</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #111; color: #eee; font-family: sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+  #toolbar {
+    background: #1e1e1e;
+    border-bottom: 1px solid #333;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+  #toolbar .logo { font-weight: 700; font-size: 15px; color: #4a9eff; }
+  #status { font-size: 12px; padding: 3px 10px; border-radius: 20px; background: #333; }
+  #status.connected { background: #1a4a1a; color: #4caf50; }
+  #status.disconnected { background: #4a1a1a; color: #f44336; }
+  .sep { width: 1px; height: 20px; background: #333; }
+  .btn { background: #2a2a2a; border: 1px solid #444; color: #ccc; padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .btn:hover { background: #3a3a3a; }
+  .btn.active { background: #1a3a5a; color: #4a9eff; border-color: #4a9eff; }
+  #fps-display { font-size: 11px; color: #666; margin-left: auto; }
+  #quality-wrap { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #888; }
+  #quality { width: 80px; accent-color: #4a9eff; }
+
+  #screen-wrap {
+    flex: 1; overflow: hidden; display: flex;
+    align-items: center; justify-content: center;
+    position: relative; cursor: none;
+  }
+  #screen { max-width: 100%; max-height: 100%; object-fit: contain; display: block; user-select: none; }
+  #cursor {
+    position: absolute; width: 14px; height: 14px;
+    border: 2px solid #fff; border-radius: 50%;
+    pointer-events: none; transform: translate(-50%, -50%);
+    box-shadow: 0 0 4px rgba(0,0,0,.8); display: none;
+  }
+
+  /* Overlay — окремий шар ПОВЕРХ screen-wrap, не всередині */
+  #overlay {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 16px;
+    background: #111;
+    z-index: 100;
+    padding: 24px;
+    touch-action: auto;
+  }
+  #overlay .icon { font-size: 52px; }
+  #overlay p { color: #888; font-size: 14px; text-align: center; }
+
+  .ip-box {
+    display: flex;
+    align-items: center;
+    background: #222;
+    border: 2px solid #555;
+    border-radius: 10px;
+    width: 100%;
+    max-width: 320px;
+    touch-action: auto;
+  }
+  .ip-box span {
+    color: #777;
+    font-size: 15px;
+    padding: 12px 6px 12px 14px;
+    white-space: nowrap;
+    user-select: none;
+    pointer-events: none;
+  }
+  .ip-box input {
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #fff;
+    font-size: 18px;
+    padding: 12px 4px;
+    flex: 1;
+    min-width: 0;
+    touch-action: auto;
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  .ip-box .port {
+    padding: 12px 14px 12px 4px;
+  }
+
+  #connect-btn {
+    background: #1a3a6a; border: 2px solid #4a9eff; color: #4a9eff;
+    padding: 12px 0; border-radius: 10px; cursor: pointer;
+    font-size: 16px; width: 100%; max-width: 320px;
+    touch-action: auto;
+  }
+
+  #key-input { position: fixed; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <span class="logo">&#128187; RemoteCtrl</span>
+  <span id="status" class="disconnected">Не підключено</span>
+  <div class="sep"></div>
+  <button class="btn" id="btn-ctrl">Ctrl</button>
+  <button class="btn" id="btn-alt">Alt</button>
+  <button class="btn" id="btn-shift">Shift</button>
+  <div class="sep"></div>
+  <button class="btn" onclick="sendHotkey(['ctrl','c'])">Copy</button>
+  <button class="btn" onclick="sendHotkey(['ctrl','v'])">Paste</button>
+  <button class="btn" onclick="sendHotkey(['ctrl','z'])">Undo</button>
+  <button class="btn" onclick="sendHotkey(['alt','f4'])">Alt+F4</button>
+  <div class="sep"></div>
+  <div id="quality-wrap">
+    Якість: <input type="range" id="quality" min="10" max="90" value="50">
+    <span id="q-val">50</span>
+  </div>
+  <span id="fps-display">-- fps</span>
+</div>
+
+<div id="screen-wrap">
+  <img id="screen" src="" alt="screen" />
+  <div id="cursor"></div>
+</div>
+
+<!-- Overlay ОКРЕМО від screen-wrap -->
+<div id="overlay">
+  <div class="icon">&#128187;</div>
+  <p>Введи IP адресу комп'ютера</p>
+  <div class="ip-box">
+    <span>ws://</span>
+    <input id="ip-input" type="text" inputmode="url"
+      placeholder="192.168.0.100"
+      autocomplete="off" autocorrect="off"
+      autocapitalize="none" spellcheck="false" />
+    <span class="port">:8765</span>
+  </div>
+  <button id="connect-btn" onclick="connect()">Підключитись</button>
+  <p style="font-size:11px;color:#555">Запусти server.py на комп'ютері</p>
+</div>
+
+<input id="key-input" type="text" />
+
+<script>
+let ws = null;
+let screenW = 1920, screenH = 1080;
+let modifiers = { ctrl: false, alt: false, shift: false };
+let lastFrameTime = Date.now();
+let frameCount = 0;
+
+const statusEl = document.getElementById('status');
+const screenEl = document.getElementById('screen');
+const overlay = document.getElementById('overlay');
+const cursorEl = document.getElementById('cursor');
+const fpsEl = document.getElementById('fps-display');
+
+document.getElementById('quality').addEventListener('input', e => {
+  document.getElementById('q-val').textContent = e.target.value;
+});
+
+['ctrl','alt','shift'].forEach(k => {
+  document.getElementById('btn-'+k).addEventListener('click', () => {
+    modifiers[k] = !modifiers[k];
+    document.getElementById('btn-'+k).classList.toggle('active', modifiers[k]);
+  });
+});
+
+document.getElementById('ip-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') connect();
+});
+
+function connect() {
+  const ip = document.getElementById('ip-input').value.trim();
+  if (!ip) { alert('Введи IP адресу!'); return; }
+  const url = 'ws://' + ip + ':8765';
+  if (ws) ws.close();
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    statusEl.textContent = 'Підключено';
+    statusEl.className = 'connected';
+    overlay.style.display = 'none';
+    cursorEl.style.display = 'block';
+    document.getElementById('key-input').focus();
+  };
+  ws.onclose = () => {
+    statusEl.textContent = 'Відключено';
+    statusEl.className = 'disconnected';
+    overlay.style.display = 'flex';
+    cursorEl.style.display = 'none';
+  };
+  ws.onerror = () => {
+    statusEl.textContent = 'Помилка';
+    statusEl.className = 'disconnected';
+  };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'screen') {
+      screenEl.src = 'data:image/jpeg;base64,' + msg.data;
+      frameCount++;
+      const now = Date.now();
+      if (now - lastFrameTime >= 1000) {
+        fpsEl.textContent = frameCount + ' fps';
+        frameCount = 0;
+        lastFrameTime = now;
+      }
+    } else if (msg.type === 'screen_size') {
+      screenW = msg.w; screenH = msg.h;
+    }
+  };
+}
+
+function send(obj) {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
+}
+function sendHotkey(keys) { send({ type: 'hotkey', keys }); }
+
+function getCoords(clientX, clientY) {
+  const rect = screenEl.getBoundingClientRect();
+  return {
+    x: Math.round((clientX - rect.left) * (screenW / rect.width)),
+    y: Math.round((clientY - rect.top) * (screenH / rect.height))
+  };
+}
+
+// Mouse
+const wrap = document.getElementById('screen-wrap');
+wrap.addEventListener('mousemove', e => {
+  const {x,y} = getCoords(e.clientX, e.clientY);
+  cursorEl.style.left = e.clientX+'px'; cursorEl.style.top = e.clientY+'px';
+  send({type:'mouse_move',x,y});
+});
+wrap.addEventListener('mousedown', e => {
+  e.preventDefault();
+  const {x,y} = getCoords(e.clientX, e.clientY);
+  const btn = e.button===2?'right':e.button===1?'middle':'left';
+  const mods = Object.keys(modifiers).filter(k=>modifiers[k]);
+  if (mods.length) {
+    mods.forEach(m => send({type:'key_down',key:m}));
+    send({type:'mouse_click',x,y,button:btn});
+    mods.forEach(m => send({type:'key_up',key:m}));
+    mods.forEach(m => { modifiers[m]=false; document.getElementById('btn-'+m).classList.remove('active'); });
+  } else {
+    send({type:'mouse_down',x,y,button:btn});
+  }
+  document.getElementById('key-input').focus();
+});
+wrap.addEventListener('mouseup', e => {
+  const {x,y} = getCoords(e.clientX, e.clientY);
+  send({type:'mouse_up',x,y,button:e.button===2?'right':'left'});
+});
+wrap.addEventListener('dblclick', e => {
+  const {x,y} = getCoords(e.clientX, e.clientY);
+  send({type:'mouse_dblclick',x,y});
+});
+wrap.addEventListener('contextmenu', e => e.preventDefault());
+wrap.addEventListener('wheel', e => {
+  e.preventDefault();
+  const {x,y} = getCoords(e.clientX, e.clientY);
+  send({type:'scroll',x,y,dy:e.deltaY>0?-3:3});
+},{passive:false});
+
+// Touch
+let lastTap = 0, touchStart = null;
+wrap.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  const {x,y} = getCoords(t.clientX, t.clientY);
+  touchStart = {x,y};
+  send({type:'mouse_move',x,y});
+  const now = Date.now();
+  if (now - lastTap < 300) { send({type:'mouse_dblclick',x,y}); lastTap=0; }
+  else lastTap = now;
+},{passive:false});
+wrap.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  const {x,y} = getCoords(t.clientX, t.clientY);
+  send({type:'mouse_move',x,y});
+},{passive:false});
+wrap.addEventListener('touchend', e => {
+  e.preventDefault();
+  if (touchStart) { send({type:'mouse_click',x:touchStart.x,y:touchStart.y,button:'left'}); touchStart=null; }
+},{passive:false});
+
+// Keyboard
+const KEY_MAP = {
+  'Enter':'enter','Backspace':'backspace','Tab':'tab','Escape':'esc',
+  'Delete':'delete','Insert':'insert','Home':'home','End':'end',
+  'PageUp':'pageup','PageDown':'pagedown',
+  'ArrowUp':'up','ArrowDown':'down','ArrowLeft':'left','ArrowRight':'right',
+  'F1':'f1','F2':'f2','F3':'f3','F4':'f4','F5':'f5','F6':'f6',
+  'F7':'f7','F8':'f8','F9':'f9','F10':'f10','F11':'f11','F12':'f12',
+  'Control':'ctrl','Alt':'alt','Shift':'shift','Meta':'win',' ':'space',
+};
+document.addEventListener('keydown', e => {
+  if (!ws || ws.readyState!==1) return;
+  const key = KEY_MAP[e.key]||(e.key.length===1?e.key.toLowerCase():null);
+  if (!key) return;
+  if (e.ctrlKey && 'cvzxa'.includes(e.key.toLowerCase())) {
+    e.preventDefault();
+    send({type:'hotkey',keys:['ctrl',e.key.toLowerCase()]});
+    return;
+  }
+  e.preventDefault();
+  send({type:'key_down',key});
+});
+document.addEventListener('keyup', e => {
+  if (!ws || ws.readyState!==1) return;
+  const key = KEY_MAP[e.key]||(e.key.length===1?e.key.toLowerCase():null);
+  if (!key) return;
+  send({type:'key_up',key});
+});
+</script>
+</body>
+</html>
